@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}Request Status - Emergency Routing System{% endblock %}
+
+{% block content %}
+<div class="status-container">
+    <div class="status-panel">
+        <div class="panel-header">
+            <h2>📊 Request Status</h2>
+        </div>
+        <div class="panel-body">
+            <form id="statusForm" class="status-form">
+                <div class="form-group">
+                    <label for="requestId">Enter Request ID</label>
+                    <input type="number" id="requestId" name="request_id" placeholder="e.g., 123" required>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <span class="btn-icon">🔍</span> Check Status
+                </button>
+            </form>
+
+            <div id="statusResult" class="status-result"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.getElementById('statusForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const resultDiv = document.getElementById('statusResult');
+        resultDiv.innerHTML = '<p class="loading-text">Checking status...</p>';
+        
+        const requestId = document.getElementById('requestId').value;
+        
+        try {
+            const response = await fetch('/ambulance/check-status', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ request_id: requestId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                let statusHtml = '';
+                
+                if (data.status === 'Accepted') {
+                    statusHtml = `
+                        <div class="status-card status-accepted">
+                            <div class="status-icon">✓</div>
+                            <h3>Request Accepted</h3>
+                            <p class="status-message">
+                                Your emergency request has been <strong>ACCEPTED</strong> by 
+                                <strong>${data.hospital_name}</strong>.
+                            </p>
+                            <p class="status-instruction">
+                                🚨 <strong>PROCEED IMMEDIATELY TO THE HOSPITAL!</strong>
+                            </p>
+                            <div class="status-details">
+                                <p><strong>Request ID:</strong> #${data.request_id}</p>
+                                <p><strong>Patient Type:</strong> ${data.patient_type}</p>
+                                <p><strong>Emergency Type:</strong> ${data.emergency_type}</p>
+                            </div>
+                        </div>
+                    `;
+                } else if (data.status === 'Rejected') {
+                    statusHtml = `
+                        <div class="status-card status-rejected">
+                            <div class="status-icon">✗</div>
+                            <h3>Request Rejected</h3>
+                            <p class="status-message">
+                                Unfortunately, your request was <strong>REJECTED</strong> by 
+                                <strong>${data.hospital_name}</strong>.
+                            </p>
+                            <p class="status-instruction">
+                                ⚠️ Please try another hospital immediately.
+                            </p>
+                            <div class="status-details">
+                                <p><strong>Request ID:</strong> #${data.request_id}</p>
+                            </div>
+                            <a href="/" class="btn btn-primary" style="margin-top: 20px;">
+                                Find Another Hospital
+                            </a>
+                        </div>
+                    `;
+                } else if (data.status === 'Pending') {
+                    statusHtml = `
+                        <div class="status-card status-pending">
+                            <div class="status-icon">⏳</div>
+                            <h3>Request Pending</h3>
+                            <p class="status-message">
+                                Your request is <strong>PENDING</strong> at 
+                                <strong>${data.hospital_name}</strong>.
+                            </p>
+                            <p class="status-instruction">
+                                Please wait for hospital confirmation...
+                            </p>
+                            <div class="status-details">
+                                <p><strong>Request ID:</strong> #${data.request_id}</p>
+                                <p><strong>Patient Type:</strong> ${data.patient_type}</p>
+                                <p><strong>Emergency Type:</strong> ${data.emergency_type}</p>
+                            </div>
+                            <button onclick="location.reload()" class="btn btn-secondary" style="margin-top: 20px;">
+                                🔄 Refresh Status
+                            </button>
+                        </div>
+                    `;
+                }
+                
+                resultDiv.innerHTML = statusHtml;
+            } else {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-error">
+                        <strong>✗ Error:</strong> ${data.message}
+                    </div>
+                `;
+            }
+        } catch (error) {
+            resultDiv.innerHTML = `
+                <div class="alert alert-error">
+                    <strong>✗ Error:</strong> Failed to check status
+                </div>
+            `;
+        }
+    });
+</script>
+{% endblock %}
