@@ -1,111 +1,141 @@
-from flask import Blueprint, request, jsonify, render_template, session
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
-ambulance_bp = Blueprint('ambulance', __name__)
+ambulance_router = APIRouter()
 
-@ambulance_bp.route('/find-hospital', methods=['POST'])
-def find_hospital():
+# Pydantic models for request validation
+class PatientNeeds(BaseModel):
+    bed: bool = True
+    icu: bool = False
+    oxygen: bool = False
+    ventilator: bool = False
+
+class EmergencyRequest(BaseModel):
+    patient_type: str
+    emergency_type: str
+    needs: PatientNeeds
+
+class RequestStatusCheck(BaseModel):
+    request_id: int
+
+# Global reference to database (will be set by app)
+db = None
+
+def set_db(database):
+    """Set database instance from main app"""
+    global db
+    db = database
+
+@ambulance_router.post("/find-hospital")
+async def find_hospital(emergency_req: EmergencyRequest):
     """Find nearest hospital based on patient needs"""
-    from app import db, config
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not initialized")
     
     try:
-        data = request.get_json()
-        
-        # Extract form data
-        patient_type = data.get('patient_type')
-        emergency_type = data.get('emergency_type')
-        needs = {
-            'bed': True,  # Always mandatory
-            'icu': data.get('need_icu', False),
-            'oxygen': data.get('need_oxygen', False),
-            'ventilator': data.get('need_ventilator', False)
-        }
-        
-        # Ambulance location (using default from config)
+        # Get ambulance location from config
+        from config import Config
+        config = Config()
         ambulance_lat = config.DEFAULT_AMBULANCE_LATITUDE
         ambulance_lon = config.DEFAULT_AMBULANCE_LONGITUDE
         
         # Find nearest hospital
-        nearest_hospital = db.find_nearest_hospital(ambulance_lat, ambulance_lon, needs)
+        nearest_hospital = db.find_nearest_hospital(
+            ambulance_lat, 
+            ambulance_lon, 
+            emergency_req.needs.dict()
+        )
         
         if not nearest_hospital:
-            return jsonify({
-                'success': False,
-                'message': 'No hospital found with required facilities'
-            }), 404
+            raise HTTPException(
+                status_code=404, 
+                detail="No hospital found with required facilities"
+            )
         
         # Create emergency request
         request_id = db.create_emergency_request(
-            patient_type, 
-            emergency_type, 
-            needs, 
+            emergency_req.patient_type,
+            emergency_req.emergency_type,
+            emergency_req.needs.dict(),
             nearest_hospital['id']
         )
         
         if not request_id:
-            return jsonify({
-                'success': False,
-                'message': 'Failed to create emergency request'
-            }), 500
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to create emergency request"
+            )
         
-        # Store request ID in session for status tracking
-        session['last_request_id'] = request_id
+        return {
+            "success": True,
+            "message": "Request sent to nearest hospital",
+            "hospital_name": nearest_hospital['name'],
+            "distance": nearest_hospital['distance'],
+            "request_id": request_id,
+            "hospital_id": nearest_hospital['id']
+        }
         
-        return jsonify({
-            'success': True,
-            'message': 'Request sent to nearest hospital',
-            'hospital_name': nearest_hospital['name'],
-            'distance': nearest_hospital['distance'],
-            'request_id': request_id
-        }), 200
-        
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in find_hospital: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'An error occurred while processing your request'
-        }), 500
+        raise HTTPException(
+            status_code=500, 
+            detail="An error occurred while processing your request"
+        )
 
-@ambulance_bp.route('/status')
-def view_status():
-    """View status page for ambulance staff"""
-    return render_template('status.html')
-
-@ambulance_bp.route('/check-status', methods=['POST'])
-def check_status():
+@ambulance_router.post("/check-status")
+async def check_status(status_check: RequestStatusCheck):
     """Check status of emergency request"""
-    from app import db
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not initialized")
     
     try:
-        data = request.get_json()
-        request_id = data.get('request_id') or session.get('last_request_id')
-        
-        if not request_id:
-            return jsonify({
-                'success': False,
-                'message': 'No request ID provided'
-            }), 400
-        
-        # Get request status
-        request_data = db.get_request_status(request_id)
+        request_data = db.get_request_status(status_check.request_id)
         
         if not request_data:
-            return jsonify({
-                'success': False,
-                'message': 'Request not found'
-            }), 404
+            raise HTTPException(
+                status_code=404, 
+                detail="Request not found"
+            )
         
-        return jsonify({
-            'success': True,
-            'request_id': request_data['id'],
-            'status': request_data['status'],
-            'hospital_name': request_data['hospital_name'],
-            'patient_type': request_data['patient_type'],
-            'emergency_type': request_data['emergency_type']
-        }), 200
+        return {
+            "success": True,
+            "request_id": request_data['id'],
+            "status": request_data['status'],
+            "hospital_name": request_data['hospital_name'],
+            "patient_type": request_data['patient_type'],
+            "emergency_type": request_data['emergency_type'],
+            "created_at": request_data['created_at'].isoformat() if hasattr(request_data['created_at'], 'isoformat') else str(request_data['created_at'])
+        }
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error in check_status: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'An error occurred while checking status'
-        }), 500
+        raise HTTPException(
+            status_code=500, 
+            detail="An error occurred while checking status"
+        )
+
+@ambulance_router.get("/stats")
+async def get_stats():
+    """Get ambulance dashboard statistics"""
+    if not db:
+        raise HTTPException(status_code=500, detail="Database not initialized")
+    
+    try:
+        pending_requests = db.get_pending_requests()
+        hospitals = db.get_all_hospitals()
+        
+        return {
+            "success": True,
+            "total_hospitals": len(hospitals),
+            "pending_count": len([r for r in pending_requests if r['status'] == 'Pending']),
+            "accepted_count": len([r for r in pending_requests if r['status'] == 'Accepted']),
+            "response_time": "~2min"
+        }
+    except Exception as e:
+        print(f"Error in get_stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch statistics")

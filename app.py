@@ -1,37 +1,88 @@
-from flask import Flask, render_template
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from config import Config
 from models.database import Database
+from routes.ambulance import ambulance_router, set_db as set_ambulance_db
+from routes.hospital import hospital_router, set_db as set_hospital_db
+from routes.hospitals_list import hospitals_router, set_db as set_hospitals_db
 
-# Initialize Flask app
-app = Flask(__name__)
-app.config.from_object(Config)
 
-# Initialize database
-config = Config()
-db = Database(config)
+app = FastAPI(
+    title="Emergency Routing System",
+    version="1.0.0"
+)
 
-# Connect to database
-if not db.connect():
-    print("Failed to connect to database!")
-    exit(1)
+# -------------------------
+# Enable CORS
+# -------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Import and register blueprints
-from routes.ambulance import ambulance_bp
-from routes.hospital import hospital_bp
 
-app.register_blueprint(ambulance_bp, url_prefix='/ambulance')
-app.register_blueprint(hospital_bp, url_prefix='/hospital')
+# -------------------------
+# STARTUP EVENT (KEY FIX 🔑)
+# -------------------------
+@app.on_event("startup")
+def startup_event():
+    print("Initializing database...")
+    config = Config()
+    db = Database(config)
 
-@app.route('/')
-def index():
-    """Main page with both panels"""
-    return render_template('index.html')
+    print("Connecting to database...")
+    if not db.connect():
+        raise RuntimeError("Database connection failed")
 
-@app.teardown_appcontext
-def close_db(error):
-    """Close database connection when app context ends"""
-    if db and db.connection:
+    print("[OK] Database connection successful")
+
+    # store db
+    app.state.db = db
+
+    # pass db to routes
+    set_ambulance_db(db)
+    set_hospital_db(db)
+    set_hospitals_db(db)
+
+
+# -------------------------
+# SHUTDOWN EVENT
+# -------------------------
+@app.on_event("shutdown")
+def shutdown_event():
+    db = app.state.db
+    if db:
+        print("Closing database connection...")
         db.disconnect()
+        print("Database disconnected")
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+# -------------------------
+# Health check
+# -------------------------
+@app.get("/api/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "message": "Emergency Routing System API is running"
+    }
+
+
+# -------------------------
+# Routers
+# -------------------------
+app.include_router(ambulance_router, prefix="/api/ambulance", tags=["Ambulance"])
+app.include_router(hospital_router, prefix="/api/hospital", tags=["Hospital"])
+app.include_router(hospitals_router, prefix="/api/hospitals", tags=["Hospitals"])
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="127.0.0.1", port=5000, reload=True)

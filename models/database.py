@@ -148,23 +148,6 @@ class Database:
             print(f"Error fetching pending requests: {e}")
             return []
     
-    def update_request_status(self, request_id, status):
-        """Update request status (Accept/Reject)"""
-        try:
-            cursor = self.connection.cursor()
-            
-            query = "UPDATE emergency_requests SET status = %s WHERE id = %s"
-            cursor.execute(query, (status, request_id))
-            self.connection.commit()
-            cursor.close()
-            
-            return True
-            
-        except Error as e:
-            print(f"Error updating request status: {e}")
-            self.connection.rollback()
-            return False
-    
     def get_request_status(self, request_id):
         """Get status of a specific request"""
         try:
@@ -187,6 +170,23 @@ class Database:
             print(f"Error fetching request status: {e}")
             return None
     
+    def update_request_status(self, request_id, status):
+        """Update request status (Accept/Reject)"""
+        try:
+            cursor = self.connection.cursor()
+            
+            query = "UPDATE emergency_requests SET status = %s WHERE id = %s"
+            cursor.execute(query, (status, request_id))
+            self.connection.commit()
+            cursor.close()
+            
+            return True
+            
+        except Error as e:
+            print(f"Error updating request status: {e}")
+            self.connection.rollback()
+            return False
+    
     def get_all_hospitals(self):
         """Get all hospitals"""
         try:
@@ -198,3 +198,5 @@ class Database:
         except Error as e:
             print(f"Error fetching hospitals: {e}")
             return []
+
+
